@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Document Analysis Prototype</title>
+
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 2rem;
+      max-width: 900px;
+    }
+    textarea {
+      width: 100%;
+      height: 140px;
+      margin-bottom: 0.75rem;
+    }
+    button {
+      margin-top: 0.5rem;
+      padding: 0.5rem 1rem;
+      font-size: 1rem;
+    }
+    pre {
+      background: #f6f6f6;
+      padding: 1rem;
+      white-space: pre-wrap;
+    }
+    .error {
+      color: red;
+      margin-top: 1rem;
+    }
+    .hint {
+      color: #555;
+      font-size: 0.9rem;
+      margin-bottom: 0.5rem;
+    }
+    .chat-entry {
+      margin-bottom: 1.5rem;
+      border-bottom: 1px solid #ddd;
+      padding-bottom: 1rem;
+    }
+    .user {
+      font-weight: bold;
+    }
+    .assistant {
+      margin-top: 0.5rem;
+    }
+  </style>
+
+  <!-- SSE polyfill (Safari-safe) -->
+  <script src="https://unpkg.com/event-source-polyfill/src/eventsource.min.js"></script>
+</head>
+
+<body>
+
+<h2>Document Analysis</h2>
+
+<div class="hint">
+  Upload a UTF-8 text file or paste text below. Ask a natural-language question about the document.
+</div>
+
+<input type="file" id="fileInput" accept=".txt" />
+<br/><br/>
+
+<textarea id="document" placeholder="Paste document text here..."></textarea>
+
+<textarea id="query" placeholder="Ask a question about the document..."></textarea>
+
+<button onclick="submitQuery()">Analyze</button>
+
+<div id="chat"></div>
+<div id="error" class="error"></div>
+
+<script>
+let chatHistory = [];
+let currentEventSource = null;
+
+document.getElementById("fileInput").addEventListener("change", function (event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  if (!file.name.endsWith(".txt")) {
+    document.getElementById("error").innerText =
+      "Only .txt files are supported.";
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = function (e) {
+    document.getElementById("document").value = e.target.result;
+  };
+  reader.onerror = function () {
+    document.getElementById("error").innerText =
+      "Failed to read the file.";
+  };
+  reader.readAsText(file, "UTF-8");
+});
+
+function renderChat() {
+  const chatDiv = document.getElementById("chat");
+  chatDiv.innerHTML = "";
+
+  chatHistory.forEach(entry => {
+    const div = document.createElement("div");
+    div.className = "chat-entry";
+
+    div.innerHTML = `
+      <div class="user">User:</div>
+      <div>${entry.query}</div>
+      <div class="assistant"><strong>Assistant:</strong></div>
+      <pre>${entry.response}</pre>
+    `;
+
+    chatDiv.appendChild(div);
+  });
+}
+
+function submitQuery() {
+  const error = document.getElementById("error");
+  error.innerText = "";
+
+  const documentText = document.getElementById("document").value;
+  const queryText = document.getElementById("query").value;
+
+  if (!documentText.trim() || !queryText.trim()) {
+    error.innerText = "Both document text and query are required.";
+    return;
+  }
+
+  if (currentEventSource) {
+    currentEventSource.close();
+  }
+
+  const chatEntry = {
+    query: queryText,
+    response: ""
+  };
+  chatHistory.push(chatEntry);
+  renderChat();
+
+  const evtSource = new EventSourcePolyfill("/analyze/stream", {
+    headers: { "Content-Type": "application/json" },
+    payload: JSON.stringify({
+      document_text: documentText,
+      query: queryText
+    }),
+    withCredentials: false
+  });
+
+  currentEventSource = evtSource;
+
+  evtSource.onmessage = function (event) {
+    try {
+      const data = JSON.parse(event.data);
+
+      if (data.event === "token") {
+        chatEntry.response += data.content;
+        renderChat();
+      }
+
+      if (data.event === "complete") {
+        evtSource.close();
+      }
+    } catch {
+      error.innerText = "Malformed response from server.";
+      evtSource.close();
+    }
+  };
+
+  evtSource.onerror = function () {
+    error.innerText = "Streaming failed or connection lost.";
+    evtSource.close();
+  };
+}
+</script>
+
+</body>
+</html>
