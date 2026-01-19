@@ -1,0 +1,12 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# Environment / secrets
+.env
+
+# OS junk
+.DS_Store
+
+# Notebooks (if any were used locally)
+.ipynb_checkpoints/
